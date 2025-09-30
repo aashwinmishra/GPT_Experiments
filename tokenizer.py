@@ -4,6 +4,12 @@ import tiktoken
 
 
 class WordLevelTokenizer:
+  """
+  Word level tokenizer for testing and baseline comparisons.
+  Attributes:
+    id_2_token: hash map from token id to word.
+    token_2_id: hash map from word to token id.
+  """
   def __init__(self, raw_text: str) -> None:
     preprocessed = re.split(r'([,.:;?_!"()\']|--|\s)', raw_text)
     preprocessed = [token for token in preprocessed if token.strip()]
