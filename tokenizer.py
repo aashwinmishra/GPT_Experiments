@@ -34,6 +34,13 @@ class WordLevelTokenizer:
 
 
 class BPETokenizer:
+  """
+  Basic Byte Pair Encoding Tokenizer.
+  Attributes:
+    decoder: hash map from token id to token pair ids.
+    current_vocab_size: length of current vocab.
+    vocab_limit: max lenn of vocab.
+  """
   def __init__(self,
                current_vocab_len: int=256,
                vocab_limit: int=2048):
