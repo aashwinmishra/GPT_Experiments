@@ -49,6 +49,9 @@ class BPETokenizer:
     self.vocab_limit = vocab_limit
 
   def encode(self, text):
+    """
+    Encodes a string into a list of token IDs using the learned vocabulary.
+    """
     tokens = text.encode("utf-8")
     tokens = list(map(int, tokens))
     for idx in self.decoder:
@@ -68,6 +71,9 @@ class BPETokenizer:
     return tokens
 
   def decode(self, encoded: list):
+    """
+    Decodes a list of token IDs back into a string.
+    """
     ans = encoded.copy()
     d = sorted(list(self.decoder.keys()), reverse=True)
     for token in d:
@@ -81,6 +87,11 @@ class BPETokenizer:
     return ans
 
   def _train(self, text):
+    """
+    Trains the tokenizer on a given text, learning merge rules.
+    Args:
+      text (str): The text corpus to train on.
+    """
     tokens = text.encode("utf-8")
     tokens = list(map(int, tokens)) 
     tokens = self.merge(tokens, self.current_vocab_size, self.vocab_limit)
