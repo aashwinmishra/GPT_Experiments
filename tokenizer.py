@@ -1,6 +1,160 @@
 import numpy as np
 import re
+from collections import Counter
+import json
+import os
 import tiktoken
+
+
+class BPETokenizer:
+  """
+  Defines a Byte Pair Encoding Tokenizer.
+  Attributes:
+    vocab_limit: Number of additional tokens (beyond 256) in the vocabulary.
+    encoding_table: Defines mapping from a pair of merged tokens to the new token ID.
+    decoding_tables: Defines mapping from a new token ID to the pair of merged tokens.
+  """
+  def __init__(self, 
+               vocab_limit: int, 
+               encoding_table: dict=None, 
+               decoding_table: dict=None):
+    """
+    Creates an instance of the BPETokenizer class.
+    Arguments:
+      vocab_limit: Number of additional tokens (beyond 256) in the vocabulary.
+      encoding_table: Defines mapping from a pair of merged tokens to the new token ID.
+      decoding_tables: Defines mapping from a new token ID to the pair of merged tokens.
+    """
+    self.vocab_limit = vocab_limit
+    self.encoding_table = encoding_table if encoding_table is not None else {}
+    self.decoding_table = decoding_table if decoding_table is not None else {}
+
+  def save(self, 
+           tokenizer_dir: str="./tokenizer", 
+           name: str="base")->None:
+    """
+    Saves the current vocab_limit and encoding_table to specified location.
+    Arguments:
+      tokenizer_dir: Directory where to save file.
+      name: Name of json file to be save
+    """
+    os.makedirs(tokenizer_dir, exist_ok=True)
+    name_enc = name + "encoding.json"
+    enc_path = tokenizer_dir + "/" + name_enc
+    model_dict = {}
+    model_dict["vocab_limit"] = self.vocab_limit
+    model_dict["merges"] = {f"{key[0]},{key[1]}":value for key, value in self.encoding_table.items()}
+    with open(enc_path, 'w') as f:
+      json.dump(model_dict, f)
+
+
+  @classmethod
+  def load(cls, 
+           tokenizer_dir: str="./tokenizer", 
+           name: str="base"):
+    """
+    Creates a new instance of the BPETokenizer class from saved data.
+    Arguments:
+      tokenizer_dir: Directory where to save file.
+      name: Name of json file to be save
+    """
+    name_enc = name + "encoding.json"
+    enc_path = tokenizer_dir + "/" + name_enc
+    with open(enc_path, 'r') as f:
+      model_dict = json.load(f)
+    vocab_limit = model_dict["vocab_limit"]
+    encoding_table = {tuple(int(s) for s in key.split(",")): v for key, v in model_dict["merges"].items()}
+    decoding_table = {v:k for k,v in encoding_table.items()}
+    return cls(vocab_limit, encoding_table, decoding_table)
+
+  def train(self,
+            text: str, 
+            initial_vocab_size: int=256)->None:
+    """
+    Trains the instance of the BPETokenizer on given text.
+    Arguments:
+      text: text string to train the tokenizer,
+      initial_vocab_size: Size of initial vocabulary, assumed to be 256.
+    """
+    current_encoding = text.encode("utf-8")
+    current_encoding = list(map(int, current_encoding))
+    for i in range(initial_vocab_size, self.vocab_limit):
+      mcp = self._most_common_pair(current_encoding)
+      if mcp is None:
+        break
+      current_encoding = self._replace(current_encoding, mcp, i)
+      self.decoding_table[i], self.encoding_table[mcp] = mcp, i
+
+  def encode(self, 
+             text: str)->list:
+    """
+    Takes a string and tokenizes it.
+    Arguments:
+      text: string to be encoded.
+    Returns:
+      list of encoded tokens
+    """
+    encoded = text.encode("utf-8")
+    encoded = list(map(int, encoded))
+    while True:
+      all_pairs = set(zip(encoded, encoded[1:]))
+      for pair in self.encoding_table:
+        if pair in all_pairs:
+          encoded = self._replace(encoded, pair, self.encoding_table[pair])
+          break
+      else:
+        break 
+    return encoded
+
+  def decode(self, 
+             tokens: list)->str:
+    """
+    Takes a list of (valid) tokens and returns the decoded string.
+    Arguments:
+      tokens: list of valid tokens.
+    Returns:
+      string of decoded text.
+    """
+    decoded = []
+    for token in tokens:
+      self._unmerge(token, decoded)
+    decoded_string = bytes(decoded).decode("utf-8", errors="replace")
+    return decoded_string
+
+  @staticmethod
+  def _most_common_pair(l: list) -> tuple | None:
+    if len(l) < 2:
+      return None
+    pair_counter = Counter(zip(l, l[1:]))
+    return pair_counter.most_common(1)[0][0]
+
+  @staticmethod
+  def _replace(tokens: list, 
+              pair_to_replace: tuple, 
+              new_token: int) -> list:
+    new_list = []
+    if pair_to_replace is None:
+      return tokens
+    i = 0
+    while i < len(tokens):
+      if i < len(tokens) - 1 and (tokens[i], tokens[i+1]) == pair_to_replace:
+        new_list.append(new_token)
+        i += 2
+      else:
+        new_list.append(tokens[i])
+        i += 1
+    return new_list
+  
+  def _unmerge(self, token, results):
+    #TODO: Use a stack to overcome recursion limits.
+    if token < 256:
+      results.append(token)
+      return  
+    else:
+      t1, t2 = self.decoding_table[token]
+      self._unmerge(t1, results)
+      self._unmerge(t2, results)
+      return 
 
 
 class WordLevelTokenizer:
@@ -33,7 +187,7 @@ class WordLevelTokenizer:
     return re.sub(r'\s+([,.?!"()\'])', r'\1', text)
 
 
-class BPETokenizer:
+class BPETokenizer_V1:
   """
   Basic Byte Pair Encoding Tokenizer.
   Attributes:
