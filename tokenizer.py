@@ -157,34 +157,27 @@ class BPETokenizer:
       return 
 
 
-class WordLevelTokenizer:
-  """
-  Word level tokenizer for testing and baseline comparisons.
-  Attributes:
-    id_2_token: hash map from token id to word.
-    token_2_id: hash map from word to token id.
-  """
-  def __init__(self, raw_text: str) -> None:
-    preprocessed = re.split(r'([,.:;?_!"()\']|--|\s)', raw_text)
-    preprocessed = [token for token in preprocessed if token.strip()]
-    vocab = np.unique(preprocessed).tolist()
-    vocab.extend(["<unk>", "<sos>", "<eos>"])
-    self.id_2_token = {idx:token for idx, token in enumerate(vocab)}
-    self.token_2_id = {token: idx for idx, token in enumerate(vocab)}
+class WordTokenizer:
+  def __init__(self, text_2_token: dict=None):
+    self.text_2_token = {} if text_2_token is None else text_2_token
+    self.token_2_text = {token:text for text,token in text_2_token.items()} if text_2_token is not None else {}
 
-  def __len__(self) -> int:
-    return len(self.token_2_id.keys())
-
-  def encode(self, text: str) -> list:
+  def train(self, text: str)->None:
     preprocessed = re.split(r'([,.:;?_!"()\']|--|\s)', text)
-    preprocessed = [token for token in preprocessed if token.strip()]
-    encoded = [self.token_2_id[token] if token in self.token_2_id else self.token_2_id["<unk>"] for token in preprocessed]
-    return [self.token_2_id["<sos>"]] + encoded + [self.token_2_id["<eos>"]]
+    preprocessed = [word.strip() for word in preprocessed if word.strip()]
+    vocab_words = sorted(set(preprocessed))
+    vocab_words.extend(["<|unk|>", "<|endoftext|>"])
+    self.text_2_token = {word:idx for idx, word in enumerate(vocab_words)}
+    self.token_2_text = {idx:word for idx, word in enumerate(vocab_words)}
 
-  def decode(self, ids: list) -> str:
-    decoded = [self.id_2_token[id] for id in ids]
-    text = " ".join(decoded)
-    return re.sub(r'\s+([,.?!"()\'])', r'\1', text)
+  def encode(self, text: str)->list:
+    preprocessed = re.split(r'([,.:;?_!"()\']|--|\s)', text)
+    preprocessed = [word.strip() for word in preprocessed if word.strip()]
+    return [self.text_2_token[word] if word in self.text_2_token else self.text_2_token["<|unk|>"] for word in preprocessed]
+
+  def decode(self, tokens: list)->str:
+    words = [self.token_2_text[idx] for idx in tokens]
+    return re.sub(r'\s+([,.?!"()\'])', r'\1', " ".join(words))
 
 
 class BPETokenizer_V1:
