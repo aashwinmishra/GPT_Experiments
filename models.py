@@ -2,6 +2,31 @@ import torch
 import torch.nn as nn
 
 
+class GPT(nn.Module):
+  def __init__(self, 
+               vocab_size: int=50257, 
+               embed_dim: int=768, 
+               context_length: int=1024, 
+               num_layers: int=12, 
+               num_heads: int=12, 
+               dropout: float=0.1, 
+               qkv_bias: bool=False):
+    super().__init__()
+    self.embedding_layer = nn.Embedding(vocab_size, embed_dim)
+    self.pos_encoding = nn.Embedding(context_length, embed_dim)
+    self.dropout = nn.Dropout(dropout)
+    self.trf_blks = nn.ModuleList([TransformerBlock(embed_dim, context_length, num_heads, dropout, qkv_bias) for _ in range(num_layers)])
+    self.norm = LayerNorm(embed_dim)
+    self.final_layer = nn.Linear(embed_dim, vocab_size, bias=False)
+
+  def forward(self, x:torch.tensor)->torch.tensor:
+    batch_size, seq_len = x.shape
+    x = self.dropout(self.embedding_layer(x) + self.pos_encoding(torch.arange(seq_len, device=x.device)))
+    for blk in self.trf_blks:
+      x = blk(x)
+    return self.final_layer(self.norm(x))
+
+
 class MultiHeadSelfAttention(nn.Module):
   def __init__(self, 
                embed_dim: int, 
