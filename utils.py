@@ -34,6 +34,26 @@ def temperature_scaled_generation(model: nn.Module,
   return idx
 
 
+def top_k_generation(model: nn.Module, 
+                     idx: torch.tensor, 
+                     max_new_tokens: int, 
+                     context_size: int, 
+                     k: int = 10,
+                     temperature: float=1.0):
+  model.eval()
+  for _ in range(max_new_tokens):
+    input = idx[:, -context_size:]                        
+    with torch.inference_mode():
+      logits = model(input)[:, -1, :] / temperature   
+    top_logits, _ = torch.topk(logits, k, dim=-1)    
+    cutoff_values = top_logits[:, -1:]
+    logits = torch.where(condition=logits < cutoff_values, input=torch.tensor(float('-inf')), other=logits)            
+    dist = Categorical(logits=logits)
+    new_token = dist.sample().unsqueeze_(-1)
+    idx = torch.cat((idx, new_token.to(idx.device)), dim=-1)
+  return idx  
+
+
 def text_to_token_ids(text, 
                       tokenizer):
   return torch.tensor(tokenizer.encode(text, allowed_special={'<|endoftext|>'})).unsqueeze_(0)
