@@ -4,10 +4,10 @@ import torch.nn.functional as F
 import tiktoken
 
 
-def generate_text_simple(model, 
-                         idx, 
-                         max_new_tokens, 
-                         context_size):
+def generate_text_simple(model: nn.Module, 
+                         idx: torch.tensor, 
+                         max_new_tokens: int, 
+                         context_size: int):
   model.eval()
   for _ in range(max_new_tokens):
     input = idx[:, -context_size:]                        #[B, C]
@@ -15,6 +15,22 @@ def generate_text_simple(model,
       out = model(input)[:, -1:, :]                       #[B, C, V]->[B, 1, V]
     new_tokens = torch.argmax(out, dim=-1)                #[B, 1]
     idx = torch.cat((idx, new_tokens), dim=-1)
+  return idx
+
+
+def temperature_scaled_generation(model: nn.Module, 
+                                  idx: torch.tensor, 
+                                  max_new_tokens: int, 
+                                  context_size: int, 
+                                  temperature: float=1.0):
+  model.eval()
+  for _ in range(max_new_tokens):
+    input = idx[:, -context_size:]                        
+    with torch.inference_mode():
+      logits = model(input)[:, -1, :]                      
+    dist = torch.distributions.Categorical(logits=logits / temperature)
+    new_token = dist.sample().unsqueeze_(-1)
+    idx = torch.cat((idx, new_token.to(idx.device)), dim=-1)
   return idx
 
 
