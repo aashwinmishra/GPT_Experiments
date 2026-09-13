@@ -1,136 +1,58 @@
-import torch 
-import torch.nn as nn
-import torch.nn.functional as F
+import torch
 import tiktoken
 
 
-def generate_text_simple(model: nn.Module, 
-                         idx: torch.tensor, 
-                         max_new_tokens: int, 
-                         context_size: int):
+def text_to_token_ids(text, tokenizer):
+  return torch.tensor(tokenizer.encode(text)).unsqueeze_(0)
+
+def token_ids_to_text(token_ids, tokenizer):
+  return tokenizer.decode(token_ids.squeeze_().tolist())
+
+def generate_sampled_text(model,
+                          idx: torch.tensor,
+                          max_new_tokens: int=25,
+                          context_length: int=256,
+                          temperature: float = 1.0,
+                          k: int = 10,
+                          device: torch.device=torch.device("cpu")):
   model.eval()
+  idx = idx.to(device)
   for _ in range(max_new_tokens):
-    input = idx[:, -context_size:]                        #[B, C]
     with torch.inference_mode():
-      out = model(input)[:, -1:, :]                       #[B, C, V]->[B, 1, V]
-    new_tokens = torch.argmax(out, dim=-1)                #[B, 1]
-    idx = torch.cat((idx, new_tokens), dim=-1)
+      logits = model(idx[:, -min(idx.shape[-1], context_length):])[0, -1, :] / temperature
+      top_k_values, _ = torch.topk(logits, k)
+      cutoff = top_k_values[-1]
+      logits = torch.where(logits < cutoff, -float("inf"), logits)
+    dist = torch.distributions.Categorical(logits=logits)
+    new_idx = dist.sample().view(1, 1)
+    idx = torch.cat([idx, new_idx], dim=-1)
   return idx
 
 
-def temperature_scaled_generation(model: nn.Module, 
-                                  idx: torch.tensor, 
-                                  max_new_tokens: int, 
-                                  context_size: int, 
-                                  temperature: float=1.0):
-  model.eval()
-  for _ in range(max_new_tokens):
-    input = idx[:, -context_size:]                        
+def generate_text(input_text,
+                  tokenizer,
+                  max_length,
+                  context_length,
+                  model,
+                  device=torch.device('cpu')
+                  ):
+  ids = tokenizer.encode(input_text)                                            #[s] (list)
+  ids = torch.tensor(ids).to(device).unsqueeze_(0)                              #[1,s]
+  for i in range(max_length):
     with torch.inference_mode():
-      logits = model(input)[:, -1, :]                      
-    dist = torch.distributions.Categorical(logits=logits / temperature)
-    new_token = dist.sample().unsqueeze_(-1)
-    idx = torch.cat((idx, new_token.to(idx.device)), dim=-1)
-  return idx
-
-
-def top_k_generation(model: nn.Module, 
-                     idx: torch.tensor, 
-                     max_new_tokens: int, 
-                     context_size: int, 
-                     k: int = 10,
-                     temperature: float=1.0):
-  model.eval()
-  for _ in range(max_new_tokens):
-    input = idx[:, -context_size:]                        
-    with torch.inference_mode():
-      logits = model(input)[:, -1, :] / temperature   
-    top_logits, _ = torch.topk(logits, k, dim=-1)    
-    cutoff_values = top_logits[:, -1:]
-    logits = torch.where(condition=logits < cutoff_values, input=torch.tensor(float('-inf')), other=logits)            
-    dist = Categorical(logits=logits)
-    new_token = dist.sample().unsqueeze_(-1)
-    idx = torch.cat((idx, new_token.to(idx.device)), dim=-1)
-  return idx  
-
-
-def text_to_token_ids(text, 
-                      tokenizer):
-  return torch.tensor(tokenizer.encode(text, allowed_special={'<|endoftext|>'})).unsqueeze_(0)
-
-
-def token_ids_to_text(ids, 
-                      tokenizer):
+      out = model(ids[:, -context_length:])[:, -1, :].argmax(dim=-1, keepdim=True)#[1, s, 50257] -> [1, 1]
+    ids = torch.cat([ids, out], dim=-1)
   return tokenizer.decode(ids.squeeze_().tolist())
 
 
-def calc_loss_batch(input_batch, 
-                    target_batch, 
-                    model, 
-                    device):
-  model.eval()
-  with torch.inference_mode():
-    out = model(input_batch.to(device)).flatten(0, 1)
-  return F.cross_entropy(out, target_batch.flatten().to(device))
+def save_model_opt(model, opt, dir: str="./"):
+  torch.save({
+    "model_state_dict": model.state_dict(),
+    "optimizer_state_dict": opt.state_dict(),
+    },
+    dir + "model_and_optimizer.pth")
 
 
-def calc_loss_loader(data_loader, 
-                     model, 
-                     device, 
-                     num_batches=None):
-  total_loss = 0.0
-  if num_batches is None:
-    num_batches = len(data_loader)
-  else:
-    num_batches = min(num_batches, len(data_loader))
-
-  for i, (input_batch, target_batch) in enumerate(data_loader):
-    if i < num_batches:
-      total_loss += calc_loss_batch(input_batch, target_batch, model, device).item()
-    else:
-      break 
-  return total_loss / num_batches
-
-
-def train_model_simple(model, 
-                       train_loader, 
-                       val_loader, 
-                       optimizer, 
-                       device, 
-                       num_epochs, 
-                       start_context, 
-                       tokenizer):
-  train_losses, val_losses = [], []
-  tokens_seen = 0
-
-  for epoch in range(num_epochs):
-    model.train()
-    for batch_input, target_output in train_loader:
-      batch_input, target_output = batch_input.to(device), target_output.to(device)
-      out = model(batch_input)
-      optimizer.zero_grad()
-      loss = F.cross_entropy(out.flatten(0, 1), target_output.flatten())
-      loss.backward()
-      optimizer.step()
-    train_loss = calc_loss_loader(train_loader, model, device)
-    val_loss = calc_loss_loader(val_loader, model, device)
-    train_losses.append(train_loss)
-    val_losses.append(val_loss)
-    print(f"Ep {epoch+1}: "
-    f"Train loss {train_loss:.3f}, "
-    f"Val loss {val_loss:.3f}")
-
-    generate_and_print_sample(model, tokenizer, device, start_context)
-  return train_losses, val_losses
-
-
-def generate_and_print_sample(model, 
-                                tokenizer, 
-                                device, 
-                                start_context: str="Once upon a time"):
-  idx = text_to_token_ids(start_context, tokenizer)
-  context_size = model.pos_emb.weight.shape[0]
-  out = generate_text_simple(model, idx, 50, context_size)
-  decoded_text = token_ids_to_text(out, tokenizer)
-  print(decoded_text.replace("\n", " "))    
+def load_model_opt(dir, device=torch.device("cpu")):
+  return torch.load(dir + "model_and_optimizer.pth", map_location=device)
 
